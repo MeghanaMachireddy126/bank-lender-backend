@@ -7,21 +7,23 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-// PostgreSQL config from .env
+// PostgreSQL connection setup
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-  },
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 })
 
-// Routes
+// Root route
+app.get('/', (req, res) => {
+  res.send('✅ Loan Manager Backend Running!')
+})
 
-// 1. Create Loan
+// Create Loan
 app.post('/api/loans', async (req, res) => {
   const { name, amount, rate, term, startDate } = req.body
-  if (!name || !amount || !rate || !term || !startDate)
+  if (!name || !amount || !rate || !term || !startDate) {
     return res.status(400).json({ error: 'All fields required' })
+  }
 
   try {
     const result = await pool.query(
@@ -35,11 +37,12 @@ app.post('/api/loans', async (req, res) => {
   }
 })
 
-// 2. Make Payment
+// Make Payment
 app.post('/api/payments', async (req, res) => {
   const { loanId, amount, paymentDate } = req.body
-  if (!loanId || !amount || !paymentDate)
+  if (!loanId || !amount || !paymentDate) {
     return res.status(400).json({ error: 'Missing payment data' })
+  }
 
   try {
     const result = await pool.query(
@@ -53,7 +56,7 @@ app.post('/api/payments', async (req, res) => {
   }
 })
 
-// 3. Get Ledger
+// Ledger Route
 app.get('/api/loans/:id/ledger', async (req, res) => {
   const { id } = req.params
   try {
@@ -68,18 +71,19 @@ app.get('/api/loans/:id/ledger', async (req, res) => {
   }
 })
 
-// 4. Loan Summary (total paid, remaining)
+// Overview Route
 app.get('/api/loans/:id/overview', async (req, res) => {
   const { id } = req.params
   try {
     const loan = await pool.query('SELECT * FROM loans WHERE id = $1', [id])
-    const payments = await pool.query(
-      'SELECT SUM(amount) as total_paid FROM payments WHERE loan_id = $1',
-      [id]
-    )
     if (!loan.rows.length) return res.status(404).json({ error: 'Loan not found' })
 
-    const totalPaid = Number(payments.rows[0].total_paid || 0)
+    const payments = await pool.query(
+      'SELECT COALESCE(SUM(amount), 0) AS total_paid FROM payments WHERE loan_id = $1',
+      [id]
+    )
+
+    const totalPaid = Number(payments.rows[0].total_paid)
     const remaining = loan.rows[0].amount - totalPaid
 
     res.json({ loan: loan.rows[0], totalPaid, remaining })
@@ -89,7 +93,8 @@ app.get('/api/loans/:id/overview', async (req, res) => {
   }
 })
 
-app.get('/', (req, res) => res.send('Loan Manager Backend Running 🚀'))
-
+// Server start
 const PORT = process.env.PORT || 5000
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
+app.listen(PORT, () => {
+  console.log(`✅ Server started on port ${PORT}`)
+})
