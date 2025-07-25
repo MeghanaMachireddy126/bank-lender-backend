@@ -61,35 +61,34 @@ app.get("/api/loans", async (req, res) => {
   }
 });
 
-// Create a loan
+// Create a loan with EMI calculation
 app.post("/api/loans", async (req, res) => {
-  const {
-    loan_id,
-    customer_id,
-    principal_amount,
-    total_amount,
-    interest_rate,
-    loan_period_years,
-    monthly_emi,
-    status
-  } = req.body;
+  const { loan_id, customer_id, principal_amount, loan_period_years, interest_rate } = req.body;
 
-  if (
-    !loan_id || !customer_id || !principal_amount || !total_amount ||
-    !interest_rate || !loan_period_years || !monthly_emi || !status
-  ) {
-    return res.status(400).json({ error: "All loan fields are required" });
+  if (!loan_id || !customer_id || !principal_amount || !loan_period_years || !interest_rate) {
+    return res.status(400).json({ error: "Required fields: loan_id, customer_id, principal_amount, loan_period_years, interest_rate" });
   }
+
+  // Calculate interest, total amount, EMI
+  const total_interest = principal_amount * loan_period_years * (interest_rate / 100);
+  const total_amount = principal_amount + total_interest;
+  const monthly_emi = total_amount / (loan_period_years * 12);
 
   try {
     const result = await pool.query(
       `INSERT INTO loans (
         loan_id, customer_id, principal_amount, total_amount,
         interest_rate, loan_period_years, monthly_emi, status
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [loan_id, customer_id, principal_amount, total_amount, interest_rate, loan_period_years, monthly_emi, status]
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE') RETURNING *`,
+      [loan_id, customer_id, principal_amount, total_amount, interest_rate, loan_period_years, monthly_emi]
     );
-    res.status(201).json(result.rows[0]);
+
+    res.status(201).json({
+      loan_id,
+      customer_id,
+      total_amount_payable: total_amount,
+      monthly_emi: monthly_emi,
+    });
   } catch (err) {
     res.status(500).json({ error: "Failed to create loan", details: err.message });
   }
@@ -164,7 +163,64 @@ app.post("/api/payments", async (req, res) => {
 });
 
 ////////////////////
+// LEDGER (Loan transactions)
+////////////////////
+app.get("/api/loans/:loan_id/ledger", async (req, res) => {
+  try {
+    const loan = await pool.query("SELECT * FROM loans WHERE loan_id = $1", [req.params.loan_id]);
+    if (loan.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
 
+    const payments = await pool.query("SELECT * FROM payments WHERE loan_id = $1 ORDER BY payment_date DESC", [req.params.loan_id]);
+
+    const amount_paid = payments.rows.reduce((sum, p) => sum + Number(p.amount), 0);
+    const balance_amount = loan.rows[0].total_amount - amount_paid;
+    const emis_left = Math.ceil(balance_amount / loan.rows[0].monthly_emi);
+
+    res.json({
+      loan_id: loan.rows[0].loan_id,
+      customer_id: loan.rows[0].customer_id,
+      principal: loan.rows[0].principal_amount,
+      total_amount: loan.rows[0].total_amount,
+      monthly_emi: loan.rows[0].monthly_emi,
+      amount_paid,
+      balance_amount,
+      emis_left,
+      transactions: payments.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch ledger", details: err.message });
+  }
+});
+
+////////////////////
+// ACCOUNT OVERVIEW
+////////////////////
+app.get("/api/customers/:customer_id/overview", async (req, res) => {
+  try {
+    const loans = await pool.query("SELECT * FROM loans WHERE customer_id = $1", [req.params.customer_id]);
+    if (loans.rows.length === 0) return res.status(404).json({ error: "No loans found for customer" });
+
+    const loanSummaries = loans.rows.map((loan) => ({
+      loan_id: loan.loan_id,
+      principal: loan.principal_amount,
+      total_amount: loan.total_amount,
+      total_interest: loan.total_amount - loan.principal_amount,
+      emi_amount: loan.monthly_emi,
+      amount_paid: 0, // Can be calculated if needed by summing payments
+      emis_left: Math.ceil(loan.total_amount / loan.monthly_emi),
+    }));
+
+    res.json({
+      customer_id: req.params.customer_id,
+      total_loans: loans.rows.length,
+      loans: loanSummaries,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch overview", details: err.message });
+  }
+});
+
+////////////////////
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server started on port ${PORT}`);
