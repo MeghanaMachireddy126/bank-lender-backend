@@ -62,34 +62,37 @@ app.get("/api/loans", async (req, res) => {
 });
 
 // Create a loan with EMI calculation
+// Create a loan
 app.post("/api/loans", async (req, res) => {
-  const { loan_id, customer_id, principal_amount, loan_period_years, interest_rate } = req.body;
+  const { customer_id, loan_amount, loan_period_years, interest_rate_yearly } = req.body;
 
-  if (!loan_id || !customer_id || !principal_amount || !loan_period_years || !interest_rate) {
-    return res.status(400).json({ error: "Required fields: loan_id, customer_id, principal_amount, loan_period_years, interest_rate" });
+  if (!customer_id || !loan_amount || !loan_period_years || !interest_rate_yearly) {
+    return res.status(400).json({ error: "customer_id, loan_amount, loan_period_years, interest_rate_yearly are required" });
   }
 
-  // Calculate interest, total amount, EMI
-  const total_interest = principal_amount * loan_period_years * (interest_rate / 100);
-  const total_amount = principal_amount + total_interest;
-  const monthly_emi = total_amount / (loan_period_years * 12);
-
   try {
+    // Perform calculations
+    const P = parseFloat(loan_amount);
+    const N = parseInt(loan_period_years, 10);
+    const R = parseFloat(interest_rate_yearly);
+
+    const total_interest = P * N * (R / 100);
+    const total_amount = P + total_interest;
+    const monthly_emi = total_amount / (N * 12);
+
+    // Generate a loan_id (UUID or timestamp-based)
+    const loan_id = `L${Date.now()}`;
+
+    // Insert into DB
     const result = await pool.query(
-      `INSERT INTO loans (
-        loan_id, customer_id, principal_amount, total_amount,
-        interest_rate, loan_period_years, monthly_emi, status
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE') RETURNING *`,
-      [loan_id, customer_id, principal_amount, total_amount, interest_rate, loan_period_years, monthly_emi]
+      `INSERT INTO loans (loan_id, customer_id, principal_amount, total_amount, interest_rate, loan_period_years, monthly_emi, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING loan_id, customer_id, total_amount AS total_amount_payable, monthly_emi`,
+      [loan_id, customer_id, P, total_amount, R, N, monthly_emi, "ACTIVE"]
     );
 
-    res.status(201).json({
-      loan_id,
-      customer_id,
-      total_amount_payable: total_amount,
-      monthly_emi: monthly_emi,
-    });
+    res.status(201).json(result.rows[0]);
   } catch (err) {
+    console.error("Loan creation error:", err);
     res.status(500).json({ error: "Failed to create loan", details: err.message });
   }
 });
