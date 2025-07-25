@@ -92,6 +92,35 @@ app.get('/api/loans/:id/overview', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch overview' })
   }
 })
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Sample Data (You can replace this with DB logic later)
+const loans = [
+  { id: 1, borrower: 'John Doe', amount: 5000 },
+  { id: 2, borrower: 'Jane Smith', amount: 8000 }
+];
+
+const users = [
+  { id: 1, name: 'Admin User', role: 'admin' },
+  { id: 2, name: 'Customer A', role: 'user' }
+];
+
+// Root route
+app.get('/', (req, res) => {
+  res.send('✅ Loan Manager Backend is live!');
+});
+
+// Loan routes
+app.get('/api/loans', (req, res) => {
+  res.json(loans);
+});
+
+// User routes
+app.get('/api/users', (req, res) => {
+  res.json(users);
+});
 
 // Server start
 const PORT = process.env.PORT || 5000
